@@ -45,8 +45,9 @@ DWORD WINAPI hCLPThreadRoda(LPVOID);
 HANDLE hMutexArquivoDisco;
 HANDLE hEventEspacoDiscoDisponivel;
 HANDLE hEventMsgDiscoDisponivel;
-
+HANDLE hArquivoDisco; 
 HANDLE hMutexPipeHotbox;
+HANDLE hArquivoDiscoMapping;
 
 //######### STRUCT MENSAGEM FERROVIA ##########
 typedef struct {
@@ -524,14 +525,26 @@ int main() {
     hMutexArquivoDisco = CreateMutex(NULL, FALSE, L"MUTEX_ARQUIVO_DISCO");
 
 	//############ CRIAÇÃO DO ARQUIVO EM DISCO ############
-    FILE* initFile = NULL;
-    if (fopen_s(&initFile, ARQUIVO_DISCO, "wb") == 0) {
-        fclose(initFile);
-        printf("Arquivo de disco inicializado\n");
+	hArquivoDisco = CreateFile(L"arquivo_sinalizacao.dat", GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    
+    // Criação do mapeamento do arquivo
+	hArquivoDiscoMapping = CreateFileMapping(
+		hArquivoDisco, // Handle do arquivo
+		NULL,          // Atributos de segurança
+		PAGE_READWRITE,// Acesso de leitura e escrita
+		0,             // Tamanho máximo alto (0 para tamanho baixo)
+		ARQUIVO_TAMANHO_MAXIMO, // Tamanho máximo do mapeamento
+		NULL           // Nome do mapeamento (NULL para anônimo)
+	);
+    if (hArquivoDiscoMapping == NULL) {
+        DWORD erro = GetLastError();
+        printf("Erro ao criar o mapeamento de arquivo. Código de erro: %d\n", erro);
+        // Você pode tratar o erro aqui (fechar handles, retornar, etc.)
     }
     else {
-        printf("Falha ao criar arquivo inicial\n");
+        printf("Mapeamento de arquivo criado com sucesso!\n");
     }
+
 
     //######### CRIAÇÃO DE THREADS ############
     
@@ -818,6 +831,7 @@ int main() {
     CloseHandle(hMutexArquivoDisco);
     CloseHandle(hEventMsgDiscoDisponivel);
     CloseHandle(hEventEspacoDiscoDisponivel);
+	CloseHandle(hArquivoDisco);
 
     //printf("\nPressione qualquer tecla para sair...\n");
     //_getch();
