@@ -12,8 +12,9 @@
 #include <sstream>
 #include <wchar.h>
 #include <tchar.h>
-#define ARQUIVO_DISCO "arquivo_sinalizacao.dat"
+#define ARQUIVO_DISCO "arquivo_sinalizacao.dat" //nome do arquivo usado para armazenar as mensagens de sinalização
 #define MAX_MENSAGENS_DISCO 200
+#define ARQUIVO_TAMANHO_MAXIMO (MAX_MENSAGENS_DISCO * MAX_MSG_LENGTH) // 8200 bytes
 
 int disco_posicao_escrita = 0;
 
@@ -38,7 +39,6 @@ HANDLE evCLP_Exit, evFERROVIA_Exit, evHOTBOX_Exit;
 HANDLE evVISUFERROVIA_Exit, evVISUHOTBOX_Exit;
 HANDLE evEncerraThreads=NULL;
 HANDLE hPipeHotbox = INVALID_HANDLE_VALUE; //handle global para o pipe
-HANDLE hPipeFerrovia = INVALID_HANDLE_VALUE; //handle global para o pipe
 DWORD WINAPI hCLPThreadFerrovia(LPVOID);
 DWORD WINAPI hCLPThreadRoda(LPVOID);
 //handles para os arquivos em disco:
@@ -47,7 +47,6 @@ HANDLE hEventEspacoDiscoDisponivel;
 HANDLE hEventMsgDiscoDisponivel;
 
 HANDLE hMutexPipeHotbox;
-HANDLE hMutexPipeFerrovia;
 
 //######### STRUCT MENSAGEM FERROVIA ##########
 typedef struct {
@@ -121,7 +120,14 @@ void cria_msg_ferrovia() {
     //Mensagem recebida de um dos 100 sensores aleatoriamente
     int numero = 1 + (rand() % 100); // Gera número entre 1 e 100
     char sensor[9];
-    sprintf_s(sensor, sizeof(sensor), "Sin-%04d", numero);
+    char letras[3];
+    for (int i = 0; i < 3; i++) {
+        letras[i] = 'A' + rand() % 26; // Gera letras maiúsculas aleatórias
+    }
+
+    int numeros = rand() % 1000; // Gera números de 0 a 999
+
+    sprintf_s(sensor, sizeof(sensor), "%.3s-%03d", letras, numeros);
     strcpy_s(msg.id, sizeof(msg.id), sensor);
 
     // Diagnóstico
@@ -164,11 +170,19 @@ void cria_msg_roda() {
     // Preenche a mensagem com dados simulados
     msg.nseq = ++gcounter_roda; // Incrementa o número sequencial
     strcpy_s(msg.tipo, sizeof(msg.tipo), "99");
+    char sensor[9];
 
     //Mensagem recebida de um dos 100 sensores aleatoriamente
-    int numero = 1 + (rand() % 100); // Gera número entre 1 e 100
-    char sensor[9];
-    sprintf_s(sensor, sizeof(sensor), "Sin-%04d", numero);
+    char letras[3];
+    for (int i = 0; i < 3; i++) {
+        letras[i] = 'A' + rand() % 26; // Gera letras maiúsculas aleatórias
+    }
+
+    int numeros = rand() % 1000; // Gera números de 0 a 999
+
+    sprintf_s(sensor, sizeof(sensor), "%.3s-%03d", letras, numeros);
+    //int numero = 1 + (rand() % 100); // Gera número entre 1 e 100
+    
     strcpy_s(msg.id, sizeof(msg.id), sensor);
 
     //Estado
@@ -183,42 +197,6 @@ void cria_msg_roda() {
     WriteToRodaBuffer(buffer);
     printf("\033[32mMensagem Hotbox criada: %s\033[0m\n", buffer);
 }
-
-//######### FUNÇÃO PARA ESCRITA NO ARQUIVO EM DISCO ##################
-BOOL EscreveMensagemDisco(const char* mensagem) {
-    WaitForSingleObject(hMutexArquivoDisco, INFINITE);
-
-    FILE* arquivo = NULL;
-    errno_t err = fopen_s(&arquivo, ARQUIVO_DISCO, "r+b");
-    if (err != 0 || !arquivo) {
-        err = fopen_s(&arquivo, ARQUIVO_DISCO, "w+b");
-    }
-
-    if (!arquivo) {
-        printf("Erro ao abrir arquivo de disco\n");
-        ReleaseMutex(hMutexArquivoDisco);
-        return FALSE;
-    }
-
-    fseek(arquivo, 0, SEEK_END);
-    long tamanho = ftell(arquivo);
-    int num_msgs = tamanho / MAX_MSG_LENGTH;
-
-    if (num_msgs >= MAX_MENSAGENS_DISCO) {
-        fclose(arquivo);
-        ReleaseMutex(hMutexArquivoDisco);
-        return FALSE;
-    }
-
-    fseek(arquivo, 0, SEEK_END);
-    fwrite(mensagem, MAX_MSG_LENGTH, 1, arquivo);
-    fclose(arquivo);
-
-    SetEvent(hEventMsgDiscoDisponivel);
-    ReleaseMutex(hMutexArquivoDisco);
-    return TRUE;
-}
-
 
 
 //############# THREAD CRIA MENSAGENS DE FERROVIA CLP #############
@@ -291,14 +269,12 @@ DWORD WINAPI CLPMsgRodaQuente(LPVOID) {
             WaitForSingleObject(rodaBuffer.hEventSpaceAvailable, INFINITE);
         }
 
-
         // Verifica eventos sem bloquear 
         DWORD ret = WaitForMultipleObjects(2, eventos, FALSE, 0);
 
         switch (ret) {
         case WAIT_OBJECT_0: // evCLP_Exit
-            return 0;
-            return 0;
+            return 0;   
 
         case WAIT_OBJECT_0 + 1: // evCLPHotbox_PauseResume
             pausado = !pausado;
@@ -330,6 +306,64 @@ DWORD WINAPI CLPMsgRodaQuente(LPVOID) {
     return 0;
 }
 
+//######### FUNÇÃO PARA ESCRITA NO ARQUIVO EM DISCO ##################
+BOOL EscreveMensagemDisco(const char* mensagem) {
+    WaitForSingleObject(hMutexArquivoDisco, INFINITE);
+
+    // Garante mensagem com tamanho fixo e preenchimento adequado
+    char mensagemPadronizada[MAX_MSG_LENGTH] = { 0 };
+    strncpy_s(mensagemPadronizada, MAX_MSG_LENGTH, mensagem, _TRUNCATE);
+
+    // Abre o arquivo em modo append binário
+    FILE* arquivo = NULL;
+    errno_t err = fopen_s(&arquivo, ARQUIVO_DISCO, "a+b");
+
+    if (err != 0 || !arquivo) {
+        printf("[ERRO] Falha ao abrir arquivo (errno: %d)\n", err);
+        ReleaseMutex(hMutexArquivoDisco);
+        return FALSE;
+    }
+
+    // Obtém tamanho atual do arquivo
+    fseek(arquivo, 0, SEEK_END);
+    long tamanho = ftell(arquivo);
+    int num_msgs = tamanho / MAX_MSG_LENGTH;
+
+    // Implementação do comportamento circular
+    if (num_msgs >= MAX_MENSAGENS_DISCO) {
+        // Volta ao início do arquivo
+        fseek(arquivo, 0, SEEK_SET);
+        disco_posicao_escrita = 0;
+    }
+    else {
+        // Mantém na posição atual (append)
+        fseek(arquivo, 0, SEEK_END);
+    }
+
+    // Escreve a mensagem padronizada
+    size_t written = fwrite(mensagemPadronizada, sizeof(char), MAX_MSG_LENGTH, arquivo);
+    fflush(arquivo); // Garante que os dados são escritos fisicamente
+    fclose(arquivo);
+
+    if (written != MAX_MSG_LENGTH) {
+        printf("[ERRO] Falha na escrita (escritos: %zu/%d bytes)\n", written, MAX_MSG_LENGTH);
+        ReleaseMutex(hMutexArquivoDisco);
+        return FALSE;
+    }
+
+    // Atualiza a posição de escrita
+    disco_posicao_escrita = (disco_posicao_escrita + 1) % MAX_MENSAGENS_DISCO;
+
+    // Sinaliza que há nova mensagem disponível
+    SetEvent(hEventMsgDiscoDisponivel);
+
+#ifdef DEBUG
+    printf("[DEBUG] Mensagem escrita na posição %d\n", disco_posicao_escrita);
+#endif
+
+    ReleaseMutex(hMutexArquivoDisco);
+    return TRUE;
+}
 
 //############## FUNÇÃO DA THREAD DE CAPTURA DE RODA QUENTE###############
 DWORD WINAPI CapturaHotboxThread(LPVOID) {
@@ -420,16 +454,16 @@ DWORD WINAPI CapturaSinalizacaoThread(LPVOID) {
 
             if (diag[0] == '1') {
                 // Envia para VisualizaFerrovia via pipe
-                if (hPipeFerrovia != INVALID_HANDLE_VALUE) {
+                if (hPipeHotbox != INVALID_HANDLE_VALUE) {
                     DWORD bytesWritten;
-                    WaitForSingleObject(hMutexPipeFerrovia, INFINITE);
-                    BOOL success = WriteFile(hPipeFerrovia, mensagem, (DWORD)strlen(mensagem), &bytesWritten, NULL);
-                    ReleaseMutex(hMutexPipeFerrovia);
+                    WaitForSingleObject(hMutexPipeHotbox, INFINITE);
+                    BOOL success = WriteFile(hPipeHotbox, mensagem, (DWORD)strlen(mensagem), &bytesWritten, NULL);
+                    ReleaseMutex(hMutexPipeHotbox);
 
                     if (!success) {
                         printf("[Erro] Falha ao escrever na pipe Ferrovia.\n");
-                        CloseHandle(hPipeFerrovia);
-                        hPipeFerrovia = INVALID_HANDLE_VALUE;
+                        CloseHandle(hPipeHotbox);
+                        hPipeHotbox = INVALID_HANDLE_VALUE;
                     }
                 }
             }
@@ -468,26 +502,39 @@ int main() {
     HANDLE hCapturaSinalizacaoThread = NULL;
     DWORD dwThreadId;
     hEvent_ferrovia = CreateEvent(NULL, TRUE, FALSE, L"EvTimeOutFerrovia");
+
     // Eventos de pausa/retomada
     evCLPHotbox_PauseResume = CreateEvent(NULL, FALSE, FALSE, L"EV_CLPH_PAUSE");
 	evTemporização = CreateEvent(NULL, FALSE, FALSE, L"EV_TEMPORIZACAO"); // evento que nunca sera setado apenas para temporização
     evCLPFerrovia_PauseResume = CreateEvent(NULL, FALSE, FALSE, L"EV_CLPF_PAUSE");
-    //evCLP_PauseResume = CreateEvent(NULL, TRUE, FALSE, L"EV_CLP_PAUSE");
     evFERROVIA_PauseResume = CreateEvent(NULL, TRUE, FALSE, L"EV_FERROVIA_PAUSE");
     evHOTBOX_PauseResume = CreateEvent(NULL, TRUE, FALSE, L"EV_HOTBOX_PAUSE"); 
     evVISUFERROVIA_PauseResume = CreateEvent(NULL, TRUE, FALSE, L"EV_VISUFERROVIA_PAUSE");
     evVISUHOTBOX_PauseResume = CreateEvent(NULL, TRUE, FALSE, L"EV_VISUHOTBOX_PAUSE");
     hMutexPipeHotbox = CreateMutex(NULL, FALSE, NULL);
-    hMutexPipeFerrovia = CreateMutex(NULL, FALSE, NULL);
+  
+
     // Eventos de término
     evCLP_Exit = CreateEvent(NULL, TRUE, FALSE, L"EV_CLP_EXIT");
     evEncerraThreads = CreateEvent(NULL, TRUE, FALSE, L"EV_ENCERRA_THREADS"    );
+
     // Eventos para memória circular em disco
     hEventMsgDiscoDisponivel = CreateEvent(NULL, TRUE, FALSE, L"EV_MSG_DISCO_DISPONIVEL");
     hEventEspacoDiscoDisponivel = CreateEvent(NULL, TRUE, FALSE, L"EV_ESPACO_DISCO_DISPONIVEL");
     hMutexArquivoDisco = CreateMutex(NULL, FALSE, L"MUTEX_ARQUIVO_DISCO");
 
+	//############ CRIAÇÃO DO ARQUIVO EM DISCO ############
+    FILE* initFile = NULL;
+    if (fopen_s(&initFile, ARQUIVO_DISCO, "wb") == 0) {
+        fclose(initFile);
+        printf("Arquivo de disco inicializado\n");
+    }
+    else {
+        printf("Falha ao criar arquivo inicial\n");
+    }
 
+    //######### CRIAÇÃO DE THREADS ############
+    
     // Cria a thread CLP que escreve no buffer ferrovia
     hCLPThreadFerrovia = (HANDLE)_beginthreadex(
         NULL,
@@ -516,7 +563,7 @@ int main() {
         printf("Thread CLP criada com ID=0x%x\n", dwThreadId);
     }
 
-    // CRia a thread de Captura de Dados dos HotBoxes
+    // Cria a thread de Captura de Dados dos HotBoxes
     hCapturaHotboxThread = (HANDLE)_beginthreadex(
         NULL,
         0,
@@ -544,7 +591,7 @@ int main() {
     }
 
 
-    // === CRIAÇÃO DO PROCESSO VISUALIZA_HOTBOXES.EXE COM NOVO CONSOLE ===
+    //  CRIAÇÃO DO PROCESSO VISUALIZA_HOTBOXES.EXE COM NOVO CONSOLE 
     STARTUPINFO si;
     PROCESS_INFORMATION pi;
     ZeroMemory(&si, sizeof(si));
@@ -765,7 +812,6 @@ int main() {
     CloseHandle(evVISUFERROVIA_Exit);
     CloseHandle(evVISUHOTBOX_Exit);
     CloseHandle(hMutexPipeHotbox);
-	CloseHandle(hMutexPipeFerrovia);
     DestroyBuffers();
     CloseHandle(hMutexBufferRoda);
     CloseHandle(hMutexBufferFerrovia);
