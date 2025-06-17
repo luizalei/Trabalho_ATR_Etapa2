@@ -38,6 +38,7 @@ HANDLE evCLP_Exit, evFERROVIA_Exit, evHOTBOX_Exit;
 HANDLE evVISUFERROVIA_Exit, evVISUHOTBOX_Exit;
 HANDLE evEncerraThreads=NULL;
 HANDLE hPipeHotbox = INVALID_HANDLE_VALUE; //handle global para o pipe
+HANDLE hPipeFerrovia = INVALID_HANDLE_VALUE; //handle global para o pipe
 DWORD WINAPI hCLPThreadFerrovia(LPVOID);
 DWORD WINAPI hCLPThreadRoda(LPVOID);
 //handles para os arquivos em disco:
@@ -46,6 +47,7 @@ HANDLE hEventEspacoDiscoDisponivel;
 HANDLE hEventMsgDiscoDisponivel;
 
 HANDLE hMutexPipeHotbox;
+HANDLE hMutexPipeFerrovia;
 
 //######### STRUCT MENSAGEM FERROVIA ##########
 typedef struct {
@@ -417,17 +419,17 @@ DWORD WINAPI CapturaSinalizacaoThread(LPVOID) {
                 timestamp, (unsigned int)sizeof(timestamp));
 
             if (diag[0] == '1') {
-                // Envia para VisualizaHotboxes via pipe
-                if (hPipeHotbox != INVALID_HANDLE_VALUE) {
+                // Envia para VisualizaFerrovia via pipe
+                if (hPipeFerrovia != INVALID_HANDLE_VALUE) {
                     DWORD bytesWritten;
-                    WaitForSingleObject(hMutexPipeHotbox, INFINITE);
-                    BOOL success = WriteFile(hPipeHotbox, mensagem, (DWORD)strlen(mensagem), &bytesWritten, NULL);
-                    ReleaseMutex(hMutexPipeHotbox);
+                    WaitForSingleObject(hMutexPipeFerrovia, INFINITE);
+                    BOOL success = WriteFile(hPipeFerrovia, mensagem, (DWORD)strlen(mensagem), &bytesWritten, NULL);
+                    ReleaseMutex(hMutexPipeFerrovia);
 
                     if (!success) {
-                        printf("[Erro] Falha ao escrever na pipe hotbox.\n");
-                        CloseHandle(hPipeHotbox);
-                        hPipeHotbox = INVALID_HANDLE_VALUE;
+                        printf("[Erro] Falha ao escrever na pipe Ferrovia.\n");
+                        CloseHandle(hPipeFerrovia);
+                        hPipeFerrovia = INVALID_HANDLE_VALUE;
                     }
                 }
             }
@@ -476,6 +478,7 @@ int main() {
     evVISUFERROVIA_PauseResume = CreateEvent(NULL, TRUE, FALSE, L"EV_VISUFERROVIA_PAUSE");
     evVISUHOTBOX_PauseResume = CreateEvent(NULL, TRUE, FALSE, L"EV_VISUHOTBOX_PAUSE");
     hMutexPipeHotbox = CreateMutex(NULL, FALSE, NULL);
+    hMutexPipeFerrovia = CreateMutex(NULL, FALSE, NULL);
     // Eventos de término
     evCLP_Exit = CreateEvent(NULL, TRUE, FALSE, L"EV_CLP_EXIT");
     evEncerraThreads = CreateEvent(NULL, TRUE, FALSE, L"EV_ENCERRA_THREADS"    );
@@ -762,6 +765,7 @@ int main() {
     CloseHandle(evVISUFERROVIA_Exit);
     CloseHandle(evVISUHOTBOX_Exit);
     CloseHandle(hMutexPipeHotbox);
+	CloseHandle(hMutexPipeFerrovia);
     DestroyBuffers();
     CloseHandle(hMutexBufferRoda);
     CloseHandle(hMutexBufferFerrovia);
