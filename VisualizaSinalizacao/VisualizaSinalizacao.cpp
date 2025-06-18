@@ -79,7 +79,7 @@ DWORD WINAPI ThreadVisualizaSinalizacao(LPVOID) {
     // Mapeando a mesma visão do arquivo que a main.cpp
     lpimage = (char*)MapViewOfFile(hArquivoDiscoMapping, FILE_MAP_READ, 0, 0, MAX_MENSAGENS_DISCO);
 
-    // Checagem de erro para MapViewOfFile
+    // Checagem de erro para MapViewOfFile   
     if (lpimage == NULL) {
         DWORD erro = GetLastError();
         LPVOID mensagemErro = NULL;
