@@ -52,7 +52,7 @@ DWORD WINAPI ThreadVisualizaHotboxes(LPVOID) {
                         estado, (unsigned int)sizeof(estado),
                         timestamp, (unsigned int)sizeof(timestamp));
 
-                    printf("%s NSEQ: %s REMOTA: %s FALHA DE HARDWARE\n", timestamp, nseq, remota);
+                    printf("\033[31m %s NSEQ: %s REMOTA: %s FALHA DE HARDWARE\033[0m\n", timestamp, nseq, remota);
                 }
                 else {
                     // Hotbox comum: NSEQ;99;ID;ESTADO;HH:MM:SS:MS
@@ -64,10 +64,11 @@ DWORD WINAPI ThreadVisualizaHotboxes(LPVOID) {
                         estado, (unsigned int)sizeof(estado),
                         timestamp, (unsigned int)sizeof(timestamp));
 
-                    printf("%s NSEQ: %s DETECTOR: %s %s\n",
+                    printf("%s NSEQ: %s DETECTOR: %s \033[%dm%s\033[0m\n",
                         timestamp,
                         nseq,
                         id,
+                        (estado[0] == '1') ? 31 : 32,  // 31=vermelho, 32=verde
                         (estado[0] == '1') ? "RODA QUENTE DETECTADA" : "TEMP. DENTRO DA FAIXA");
                 }
             }

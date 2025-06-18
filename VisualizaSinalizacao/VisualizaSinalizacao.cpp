@@ -21,25 +21,26 @@ char* lpimage;// Apontador para imagem local
 // 20 textos de estado
 const char* estados_texto[20] = {
     "Desvio atuado",
+    "Desvio nao atuado",
     "Sinaleiro em PARE",
     "Sinaleiro em VIA LIVRE",
     "Ocorrencia na via",
+	"Sem ocorrencia na via",
+	"Sensor ativo",
     "Sensor inativo",
     "Veiculo detectado",
+	"Veiculo nao detectado",
     "Barreira abaixada",
     "Barreira levantada",
     "Desvio nao confirmado",
-    "Sensor com falha",
+	"Desvio confirmado",
     "Via ocupada",
     "Via livre",
-    "Alarme de intrusao",
     "Alimentacao normal",
     "Alimentacao interrompida",
     "Sinaleiro apagado",
-    "Controle manual ativado",
-    "Controle automatico ativo",
-    "Velocidade excedida",
-    "Falha de comunicacao"
+	"Sinaleiro aceso",
+   
 };
 
 DWORD WINAPI ThreadVisualizaSinalizacao(LPVOID) {
@@ -139,7 +140,17 @@ DWORD WINAPI ThreadVisualizaSinalizacao(LPVOID) {
                     if (parsed == 7) {
                         int estado_int = estado[0] - '0';
                         if (estado_int >= 0 && estado_int < 20) {
-                            const char* estadoTexto = estados_texto[estado_int];
+                            int indice_aleatorio;
+                            if (estado_int == 0) {
+                                // Número par aleatório (0, 2, 4, ..., 18)
+                                indice_aleatorio = (rand() % 10) * 2;
+                            }
+                            else if (estado_int == 1) {
+                                // Número ímpar aleatório (1, 3, 5, ..., 19)
+                                indice_aleatorio = (rand() % 10) * 2 + 1;
+                            }
+                            const char* estadoTexto = estados_texto[indice_aleatorio];
+
                             printf("%s NSEQ: %s REMOTA: %s SENSOR: %s ESTADO: %s\n",
                                 timestamp, nseq, remota, id, estadoTexto);
                             mensagens_processadas++;

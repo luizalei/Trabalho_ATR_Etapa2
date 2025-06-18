@@ -200,7 +200,6 @@ void cria_msg_roda() {
     printf("\033[32mMensagem Hotbox criada: %s\033[0m\n", buffer);
 }
 
-
 //############# THREAD CRIA MENSAGENS DE FERROVIA CLP #############
 DWORD WINAPI CLPMsgFerrovia(LPVOID) {
     BOOL pausado = FALSE;
