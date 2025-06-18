@@ -114,7 +114,7 @@ DWORD WINAPI ThreadVisualizaSinalizacao(LPVOID) {
 
                 // Processa cada mensagem
                 int mensagens_processadas = 0;
-                long tamanho = strlen(lpimage); // Supondo que lpimage contém as mensagens
+                long tamanho = strlen(lpimage); 
 
                 for (long i = 0; i < tamanho; i += MAX_MSG_LENGTH) {
                     char mensagem[MAX_MSG_LENGTH + 1] = { 0 };
@@ -146,11 +146,8 @@ DWORD WINAPI ThreadVisualizaSinalizacao(LPVOID) {
                         }
                     }
                 }
-
-                printf("[INFO] Processadas %d mensagens\n", mensagens_processadas);
-
                 // Limpa o buffer após processar
-                memset(lpimage, 0, MAX_MENSAGENS_DISCO); // Limpa a memória mapeada
+                //memset(lpimage, 0, MAX_MENSAGENS_DISCO); // Limpa a memória mapeada
 
                 SetEvent(hEventSemMsgNovas); // Sinaliza que novas mensagens foram processadas
                 ReleaseMutex(hMutexArquivoDisco);
@@ -252,10 +249,6 @@ int main() {
             erro, (char*)mensagemErro);
 
         LocalFree(mensagemErro);
-
-        // Tratamento adicional pode ser necessário aqui
-        // Por exemplo, tentar novamente ou encerrar o programa
-        return FALSE;
     }
 
     CloseHandle(hThread);
