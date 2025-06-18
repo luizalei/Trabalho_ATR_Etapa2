@@ -14,6 +14,9 @@ HANDLE evEncerraThreads;
 HANDLE hEventMsgDiscoDisponivel;
 HANDLE hEventEspacoDiscoDisponivel;
 HANDLE hMutexArquivoDisco;
+HANDLE hEventSemMsgNovas;
+
+char* lpimage;// Apontador para imagem local
 
 // 20 textos de estado
 const char* estados_texto[20] = {
@@ -41,63 +44,164 @@ const char* estados_texto[20] = {
 
 DWORD WINAPI ThreadVisualizaSinalizacao(LPVOID) {
     HANDLE eventos[2] = { evVISUFERROVIA_PauseResume, evEncerraThreads };
+    HANDLE hArquivoDiscoMapping;
     BOOL pausado = FALSE;
 
     printf("Thread de Visualizacao de Sinalizacao iniciada\n");
 
-    while (1) {
-        DWORD waitResult = WaitForSingleObject(hEventMsgDiscoDisponivel, 100);
-        /*if (waitResult == WAIT_OBJECT_0 && !pausado) {
-            WaitForSingleObject(hMutexArquivoDisco, INFINITE);*/
+    // Abre o arquivo em modo leitura na mesma visão que a main.cpp
+    hArquivoDiscoMapping = OpenFileMapping(FILE_MAP_READ, FALSE, L"MAPEAMENTO");
 
-           
+    //Checagem de erro para OpenFileMapping
+    if (hArquivoDiscoMapping == NULL) {
+        DWORD erro = GetLastError();
 
-    //        // Processa cada mensagem
-    //        int mensagens_processadas = 0;
-    //        for (long i = 0; i < tamanho; i += MAX_MSG_LENGTH) {
-    //            char mensagem[MAX_MSG_LENGTH + 1] = { 0 };
-    //            memcpy(mensagem, buffer + i, MAX_MSG_LENGTH);
+        // Converte o código de erro em uma mensagem legível
+        LPVOID mensagemErro;
+        FormatMessage(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL,
+            erro,
+            MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+            (LPTSTR)&mensagemErro,
+            0,
+            NULL
+        );
 
-    //            // Processamento da mensagem (mantido igual ao seu código original)
-    //            char nseq[8], tipo[3], diag[2], remota[4], id[9], estado[2], timestamp[13];
-    //            int parsed = sscanf_s(mensagem, "%7[^;];%2[^;];%1[^;];%3[^;];%8[^;];%1[^;];%12s",
-    //                nseq, (unsigned)sizeof(nseq),
-    //                tipo, (unsigned)sizeof(tipo),
-    //                diag, (unsigned)sizeof(diag),
-    //                remota, (unsigned)sizeof(remota),
-    //                id, (unsigned)sizeof(id),
-    //                estado, (unsigned)sizeof(estado),
-    //                timestamp, (unsigned)sizeof(timestamp));
-
-    //            if (parsed == 7) {
-    //                int estado_int = estado[0] - '0';
-    //                if (estado_int >= 0 && estado_int < 20) {
-    //                    const char* estadoTexto = estados_texto[estado_int];
-    //                    printf("%s NSEQ: %s REMOTA: %s SENSOR: %s ESTADO: %s\n",
-    //                        timestamp, nseq, remota, id, estadoTexto);
-    //                    mensagens_processadas++;
-    //                }
-    //            }
-    //        }
-
-    //        printf("[INFO] Processadas %d mensagens\n", mensagens_processadas);
-
-    //        // Limpa o buffer após processar
-    //        free(buffer);
-
-    //        // Limpa o arquivo após processamento
-    //        freopen_s(&arquivo, ARQUIVO_DISCO, "w+b", arquivo);
-    //        fclose(arquivo);
-    //        ReleaseMutex(hMutexArquivoDisco);
-    //    }
-
-    //    // Controle de pausa e encerramento (mantido igual)
-    //    DWORD result = WaitForMultipleObjects(2, eventos, FALSE, 0);
-    //    /* ... resto do código igual ... */
+        printf("Erro ao abrir o mapeamento de arquivo. Codigo: %d - Mensagem: %s\n", erro, (char*)mensagemErro);
+        LocalFree(mensagemErro);
     }
-    return 0;
-}
+    else {
+        printf("Mapeamento aberto com sucesso!\n");
+    }
 
+    // Mapeando a mesma visão do arquivo que a main.cpp
+    lpimage = (char*)MapViewOfFile(hArquivoDiscoMapping, FILE_MAP_READ, 0, 0, MAX_MENSAGENS_DISCO);
+
+    // Checagem de erro para MapViewOfFile
+    if (lpimage == NULL) {
+        DWORD erro = GetLastError();
+        LPVOID mensagemErro = NULL;
+
+        FormatMessage(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER |
+            FORMAT_MESSAGE_FROM_SYSTEM |
+            FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL,
+            erro,
+            MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+            (LPTSTR)&mensagemErro,
+            0,
+            NULL
+        );
+
+        printf("Falha ao mapear a view do arquivo. Erro %d: %s\n",
+            erro, (char*)mensagemErro);
+
+        LocalFree(mensagemErro);
+
+        return FALSE; // ou outro código de erro apropriado
+    }
+
+    while (1) {
+        if (!pausado) {
+            DWORD waitResult = WaitForSingleObject(hEventMsgDiscoDisponivel, INFINITE); //Espera que hajam mensagens escritas
+            if (waitResult == WAIT_OBJECT_0 && !pausado) {
+
+                WaitForSingleObject(hMutexArquivoDisco, INFINITE); //Garante acesso único ao arquivo 
+                ResetEvent(hEventMsgDiscoDisponivel); // Avisa a main que recebeu a mensagem
+
+
+                // Processa cada mensagem
+                int mensagens_processadas = 0;
+                long tamanho = strlen(lpimage); // Supondo que lpimage contém as mensagens
+
+                for (long i = 0; i < tamanho; i += MAX_MSG_LENGTH) {
+                    char mensagem[MAX_MSG_LENGTH + 1] = { 0 };
+                    size_t copy_size = (tamanho - i) < MAX_MSG_LENGTH ? (tamanho - i) : MAX_MSG_LENGTH;
+                    memcpy_s(mensagem, MAX_MSG_LENGTH, lpimage + i, copy_size);
+                    mensagem[copy_size] = '\0'; // Garante terminação nula
+
+                    // Processamento da mensagem 
+                    char nseq[8] = { 0 }, tipo[3] = { 0 }, diag[2] = { 0 },
+                        remota[4] = { 0 }, id[9] = { 0 }, estado[2] = { 0 },
+                        timestamp[13] = { 0 };
+
+                    int parsed = sscanf_s(mensagem, "%7[^;];%2[^;];%1[^;];%3[^;];%8[^;];%1[^;];%12s",
+                        nseq, (unsigned)_countof(nseq),
+                        tipo, (unsigned)_countof(tipo),
+                        diag, (unsigned)_countof(diag),
+                        remota, (unsigned)_countof(remota),
+                        id, (unsigned)_countof(id),
+                        estado, (unsigned)_countof(estado),
+                        timestamp, (unsigned)_countof(timestamp));
+
+                    if (parsed == 7) {
+                        int estado_int = estado[0] - '0';
+                        if (estado_int >= 0 && estado_int < 20) {
+                            const char* estadoTexto = estados_texto[estado_int];
+                            printf("%s NSEQ: %s REMOTA: %s SENSOR: %s ESTADO: %s\n",
+                                timestamp, nseq, remota, id, estadoTexto);
+                            mensagens_processadas++;
+                        }
+                    }
+                }
+
+                printf("[INFO] Processadas %d mensagens\n", mensagens_processadas);
+
+                // Limpa o buffer após processar
+                memset(lpimage, 0, MAX_MENSAGENS_DISCO); // Limpa a memória mapeada
+
+                SetEvent(hEventSemMsgNovas); // Sinaliza que novas mensagens foram processadas
+                ReleaseMutex(hMutexArquivoDisco);
+            }
+
+            DWORD result = WaitForMultipleObjects(2, eventos, FALSE, 0);
+
+        }
+
+        // Verifica os dois eventos simultaneamente (sem bloquear)
+        DWORD result = WaitForMultipleObjects(2, eventos, FALSE, 0);
+
+        switch (result) {
+        case WAIT_OBJECT_0:  // evVISUFERROVIA_PauseResume
+            pausado = !pausado;
+            if (pausado) {
+                printf("[Sinalizacao] Thread pausada. Aguardando retomada...\n");
+            }
+            else {
+                printf("[Sinalizacao] Retomando execucao.\n");
+            }
+            ResetEvent(evVISUFERROVIA_PauseResume);
+            break;
+
+        case WAIT_OBJECT_0 + 1:  // evVISUFERROVIA_Exit
+            printf("[Sinalizacao] Evento de saida recebido. Encerrando thread.\n");
+            return 0;
+
+        default:
+            break; // Nenhum evento sinalizado
+        }
+
+        // Se pausado, entra em espera bloqueante ate algo acontecer
+        while (pausado) {
+            DWORD r = WaitForMultipleObjects(2, eventos, FALSE, INFINITE);
+            if (r == WAIT_OBJECT_0) { // Toggle pausa
+                pausado = FALSE;
+                printf("[Sinalizacao] Retomando execucao.\n");
+                ResetEvent(evVISUFERROVIA_PauseResume);
+                break;
+            }
+            else if (r == WAIT_OBJECT_0 + 1) { // Evento de saida
+                printf("[Sinalizacao] Evento de saida recebido. Encerrando thread.\n");
+                return 0;
+            }
+        }
+    }
+
+    return 0;
+
+}
 
 int main() {
     evVISUFERROVIA_PauseResume = OpenEvent(EVENT_ALL_ACCESS, FALSE, L"EV_VISUFERROVIA_PAUSE");
@@ -107,6 +211,7 @@ int main() {
     hEventEspacoDiscoDisponivel = OpenEvent(EVENT_ALL_ACCESS, FALSE, L"EV_ESPACO_DISCO_DISPONIVEL");
     hMutexArquivoDisco = OpenMutex(MUTEX_ALL_ACCESS, FALSE, L"MUTEX_ARQUIVO_DISCO");
     hEventMsgDiscoDisponivel = OpenEvent(EVENT_ALL_ACCESS, FALSE, L"EV_MSG_DISCO_DISPONIVEL");
+    hEventSemMsgNovas = OpenEvent(EVENT_ALL_ACCESS, FALSE, L"EV_SEM_MSG_NOVAS");
 
     if (hEventMsgDiscoDisponivel == NULL) {
         printf("[Erro] Falha ao abrir EV_MSG_DISCO_DISPONIVEL: %lu\n", GetLastError());
@@ -124,11 +229,41 @@ int main() {
 
     WaitForSingleObject(hThread, INFINITE);
 
+    BOOL status;
+    status = UnmapViewOfFile(lpimage);
+    // Checagem de erro
+    if (!status) {
+        DWORD erro = GetLastError();
+        LPVOID mensagemErro = NULL;
+
+        FormatMessage(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER |
+            FORMAT_MESSAGE_FROM_SYSTEM |
+            FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL,
+            erro,
+            MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+            (LPTSTR)&mensagemErro,
+            0,
+            NULL
+        );
+
+        printf("Falha ao desmapear a view do arquivo. Erro %d: %s\n",
+            erro, (char*)mensagemErro);
+
+        LocalFree(mensagemErro);
+
+        // Tratamento adicional pode ser necessário aqui
+        // Por exemplo, tentar novamente ou encerrar o programa
+        return FALSE;
+    }
+
     CloseHandle(hThread);
     CloseHandle(evVISUFERROVIA_PauseResume);
     CloseHandle(evVISUFERROVIA_Exit);
     CloseHandle(evVISUFERROVIATemporização);
     CloseHandle(evEncerraThreads);
+    CloseHandle(hEventSemMsgNovas);
 
     return 0;
 }

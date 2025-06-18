@@ -17,6 +17,7 @@
 #define ARQUIVO_TAMANHO_MAXIMO (MAX_MENSAGENS_DISCO * MAX_MSG_LENGTH) // 8200 bytes
 
 int disco_posicao_escrita = 0;
+char* lpimage;			// Apontador para imagem local
 
 //############ DEFINIÇÕES GLOBAIS ############
 #define __WIN32_WINNT 0X0500
@@ -28,10 +29,8 @@ typedef unsigned (WINAPI* CAST_FUNCTION)(LPVOID);
 typedef unsigned* CAST_LPDWORD;
 
 //############# HANDLES ##########
-HANDLE hEvent_ferrovia; // Handle para o evento de timeout da ferrovia
-HANDLE hEvent_roda; // Handle para o evento de timeout da roda
-//HANDLE WINAPI CreateTimerQueue(VOID);
 HANDLE hBufferRodaCheio;  // Evento para sinalizar espaço no buffer
+
 //handles para a tarefa de leitura do teclado
 HANDLE evCLPFerrovia_PauseResume, evCLPHotbox_PauseResume, evFERROVIA_PauseResume, evHOTBOX_PauseResume, evTemporização;
 HANDLE evVISUFERROVIA_PauseResume, evVISUHOTBOX_PauseResume;
@@ -41,6 +40,7 @@ HANDLE evEncerraThreads=NULL;
 HANDLE hPipeHotbox = INVALID_HANDLE_VALUE; //handle global para o pipe
 DWORD WINAPI hCLPThreadFerrovia(LPVOID);
 DWORD WINAPI hCLPThreadRoda(LPVOID);
+
 //handles para os arquivos em disco:
 HANDLE hMutexArquivoDisco;
 HANDLE hEventEspacoDiscoDisponivel;
@@ -48,6 +48,7 @@ HANDLE hEventMsgDiscoDisponivel;
 HANDLE hArquivoDisco; 
 HANDLE hMutexPipeHotbox;
 HANDLE hArquivoDiscoMapping;
+HANDLE hEventSemMsgNovas;
 
 //######### STRUCT MENSAGEM FERROVIA ##########
 typedef struct {
@@ -311,58 +312,19 @@ DWORD WINAPI CLPMsgRodaQuente(LPVOID) {
 BOOL EscreveMensagemDisco(const char* mensagem) {
     WaitForSingleObject(hMutexArquivoDisco, INFINITE);
 
-    // Garante mensagem com tamanho fixo e preenchimento adequado
-    char mensagemPadronizada[MAX_MSG_LENGTH] = { 0 };
-    strncpy_s(mensagemPadronizada, MAX_MSG_LENGTH, mensagem, _TRUNCATE);
-
-    // Abre o arquivo em modo append binário
-    FILE* arquivo = NULL;
-    errno_t err = fopen_s(&arquivo, ARQUIVO_DISCO, "a+b");
-
-    if (err != 0 || !arquivo) {
-        printf("[ERRO] Falha ao abrir arquivo (errno: %d)\n", err);
+	// Escreve a mensagem no arquivo circular
+    errno_t err = strcpy_s(lpimage, MAX_MSG_LENGTH, mensagem);
+    if (err != 0) {
+        // Tratamento de erro na cópia
         ReleaseMutex(hMutexArquivoDisco);
         return FALSE;
     }
-
-    // Obtém tamanho atual do arquivo
-    fseek(arquivo, 0, SEEK_END);
-    long tamanho = ftell(arquivo);
-    int num_msgs = tamanho / MAX_MSG_LENGTH;
-
-    // Implementação do comportamento circular
-    if (num_msgs >= MAX_MENSAGENS_DISCO) {
-        // Volta ao início do arquivo
-        fseek(arquivo, 0, SEEK_SET);
-        disco_posicao_escrita = 0;
-    }
-    else {
-        // Mantém na posição atual (append)
-        fseek(arquivo, 0, SEEK_END);
-    }
-
-    // Escreve a mensagem padronizada
-    size_t written = fwrite(mensagemPadronizada, sizeof(char), MAX_MSG_LENGTH, arquivo);
-    fflush(arquivo); // Garante que os dados são escritos fisicamente
-    fclose(arquivo);
-
-    if (written != MAX_MSG_LENGTH) {
-        printf("[ERRO] Falha na escrita (escritos: %zu/%d bytes)\n", written, MAX_MSG_LENGTH);
-        ReleaseMutex(hMutexArquivoDisco);
-        return FALSE;
-    }
-
-    // Atualiza a posição de escrita
-    disco_posicao_escrita = (disco_posicao_escrita + 1) % MAX_MENSAGENS_DISCO;
 
     // Sinaliza que há nova mensagem disponível
     SetEvent(hEventMsgDiscoDisponivel);
-
-#ifdef DEBUG
-    printf("[DEBUG] Mensagem escrita na posição %d\n", disco_posicao_escrita);
-#endif
-
+    ResetEvent(hEventSemMsgNovas);
     ReleaseMutex(hMutexArquivoDisco);
+
     return TRUE;
 }
 
@@ -502,7 +464,7 @@ int main() {
     HANDLE hCapturaHotboxThread = NULL;
     HANDLE hCapturaSinalizacaoThread = NULL;
     DWORD dwThreadId;
-    hEvent_ferrovia = CreateEvent(NULL, TRUE, FALSE, L"EvTimeOutFerrovia");
+    
 
     // Eventos de pausa/retomada
     evCLPHotbox_PauseResume = CreateEvent(NULL, FALSE, FALSE, L"EV_CLPH_PAUSE");
@@ -513,8 +475,8 @@ int main() {
     evVISUFERROVIA_PauseResume = CreateEvent(NULL, TRUE, FALSE, L"EV_VISUFERROVIA_PAUSE");
     evVISUHOTBOX_PauseResume = CreateEvent(NULL, TRUE, FALSE, L"EV_VISUHOTBOX_PAUSE");
     hMutexPipeHotbox = CreateMutex(NULL, FALSE, NULL);
-  
 
+ 
     // Eventos de término
     evCLP_Exit = CreateEvent(NULL, TRUE, FALSE, L"EV_CLP_EXIT");
     evEncerraThreads = CreateEvent(NULL, TRUE, FALSE, L"EV_ENCERRA_THREADS"    );
@@ -523,6 +485,7 @@ int main() {
     hEventMsgDiscoDisponivel = CreateEvent(NULL, TRUE, FALSE, L"EV_MSG_DISCO_DISPONIVEL");
     hEventEspacoDiscoDisponivel = CreateEvent(NULL, TRUE, FALSE, L"EV_ESPACO_DISCO_DISPONIVEL");
     hMutexArquivoDisco = CreateMutex(NULL, FALSE, L"MUTEX_ARQUIVO_DISCO");
+	hEventSemMsgNovas = CreateEvent(NULL, TRUE, FALSE, L"EV_SEM_MSG_NOVAS");
 
 	//############ CRIAÇÃO DO ARQUIVO EM DISCO ############
 	hArquivoDisco = CreateFile(L"arquivo_sinalizacao.dat", GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -534,7 +497,7 @@ int main() {
 		PAGE_READWRITE,// Acesso de leitura e escrita
 		0,             // Tamanho máximo alto (0 para tamanho baixo)
 		ARQUIVO_TAMANHO_MAXIMO, // Tamanho máximo do mapeamento
-		NULL           // Nome do mapeamento (NULL para anônimo)
+        L"MAPEAMENTO"           // Nome do mapeamento (NULL para anônimo)
 	);
     if (hArquivoDiscoMapping == NULL) {
         DWORD erro = GetLastError();
@@ -545,6 +508,8 @@ int main() {
         printf("Mapeamento de arquivo criado com sucesso!\n");
     }
 
+    // Criação do visão de mapeamento
+    lpimage = (char*)MapViewOfFile(hArquivoDiscoMapping, FILE_MAP_WRITE, 0, 0, MAX_MENSAGENS_DISCO);
 
     //######### CRIAÇÃO DE THREADS ############
     
@@ -807,10 +772,37 @@ int main() {
         CloseHandle(hCapturaSinalizacaoThread);
     }
 
+    // Desmapeia o arquivo
+    BOOL status;
+    status = UnmapViewOfFile(lpimage);
+    // Checagem de erro
+    if (!status) {
+        DWORD erro = GetLastError();
+        LPVOID mensagemErro = NULL;
+
+        FormatMessage(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER |
+            FORMAT_MESSAGE_FROM_SYSTEM |
+            FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL,
+            erro,
+            MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+            (LPTSTR)&mensagemErro,
+            0,
+            NULL
+        );
+
+        printf("Falha ao desmapear a view do arquivo. Erro %d: %s\n",
+            erro, (char*)mensagemErro);
+
+        LocalFree(mensagemErro);
+
+        // Tratamento adicional pode ser necessário aqui
+        // Por exemplo, tentar novamente ou encerrar o programa
+        return FALSE;
+    }
 
     // Fecha handles de eventos
-    CloseHandle(hEvent_ferrovia);
-    CloseHandle(hEvent_roda);
     CloseHandle(hBufferRodaCheio);
     CloseHandle(evCLPFerrovia_PauseResume);
     CloseHandle(evCLPHotbox_PauseResume);
@@ -832,6 +824,7 @@ int main() {
     CloseHandle(hEventMsgDiscoDisponivel);
     CloseHandle(hEventEspacoDiscoDisponivel);
 	CloseHandle(hArquivoDisco);
+    CloseHandle(hEventSemMsgNovas);
 
     //printf("\nPressione qualquer tecla para sair...\n");
     //_getch();
